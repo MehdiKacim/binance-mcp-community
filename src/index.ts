@@ -118,6 +118,19 @@ async function startHttp() {
     }
   });
 
+// Proxy Binance API
+app.use('/binance', async (req: any, res: any) => {
+  const target = 'https://api.binance.com' + req.url;
+  const response = await fetch(target, {
+    method: req.method,
+    headers: { ...req.headers, host: 'api.binance.com' },
+    body: req.method !== 'GET' ? req.body : undefined,
+  });
+  const data = await response.text();
+  res.status(response.status).send(data);
+});
+
+
   app.get('/mcp', async (req: any, res: any) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
     if (!sessionId || !transports[sessionId]) {
