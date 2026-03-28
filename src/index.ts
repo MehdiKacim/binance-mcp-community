@@ -30,9 +30,9 @@ async function startHttp() {
   // ── Binance API Proxy ──────────────────────────────────────────
   // Routes /binance/* → https://api.binance.com/*
   // Set BINANCE_BASE_URL=https://YOUR-RAILWAY-URL/binance in Railway vars
-  app.all('/binance/:path(*)', async (req: any, res: any) => {
+  app.use('/binance', async (req: any, res: any) => {
     try {
-      const path = req.url.replace(/^\/binance/, '');
+      const path = req.url || '/';
       const target = `https://api.binance.com${path}`;
       const headers: Record<string, string> = {};
       if (req.headers['x-mbx-apikey']) headers['X-MBX-APIKEY'] = req.headers['x-mbx-apikey'];
