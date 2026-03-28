@@ -1,15 +1,16 @@
 /**
- * Shared MCP Server — used by both Node.js (index.ts) and CF Worker (worker.ts)
+ * Shared MCP Server — Fixed version
  *
- * FIX: registerTool() in MCP SDK v1.26+ expects Zod schemas, not raw JSON Schema.
- * Calling it with plain objects causes "v3Schema.safeParseAsync is not a function".
- * Solution: bypass registerTool() entirely and use raw request handlers instead.
+ * FIX: Use low-level Server class instead of McpServer to declare tool
+ * capabilities explicitly, bypassing the Zod schema requirement of registerTool().
  */
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { BinanceClient } from './binance-client.js';
 import { TOOLS } from './tools.js';
@@ -78,10 +79,19 @@ const PUBLIC_TOOLS = [
 ];
 
 export function createServer(config?: BinanceMcpConfig) {
-  const server = new McpServer({ name: 'binance-mcp', version: '1.0.0' });
+  // Use low-level Server with explicit capabilities instead of McpServer
+  const server = new Server(
+    { name: 'binance-mcp', version: '1.0.0' },
+    {
+      capabilities: {
+        tools: {},
+        prompts: {},
+      },
+    }
+  );
 
-  // FIX: Use raw handlers instead of registerTool() to avoid Zod schema issue
-  (server as any).server.setRequestHandler(ListToolsRequestSchema, () => ({
+  // tools/list
+  server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: TOOLS.map(tool => ({
       name: tool.name,
       description: tool.description,
@@ -90,14 +100,15 @@ export function createServer(config?: BinanceMcpConfig) {
     })),
   }));
 
-  (server as any).server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+  // tools/call
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const toolName = request.params.name;
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
     const tool = TOOLS.find(t => t.name === toolName);
     if (!tool) {
       return {
-        content: [{ type: 'text', text: `Error: Unknown tool "${toolName}"` }],
+        content: [{ type: 'text' as const, text: `Error: Unknown tool "${toolName}"` }],
         isError: true,
       };
     }
@@ -113,7 +124,7 @@ export function createServer(config?: BinanceMcpConfig) {
 
     if (!PUBLIC_TOOLS.includes(toolName) && (!apiKey || !secretKey)) {
       return {
-        content: [{ type: 'text', text: 'Error: BINANCE_API_KEY and BINANCE_SECRET_KEY are required for this operation.' }],
+        content: [{ type: 'text' as const, text: 'Error: BINANCE_API_KEY and BINANCE_SECRET_KEY are required.' }],
         isError: true,
       };
     }
@@ -123,24 +134,36 @@ export function createServer(config?: BinanceMcpConfig) {
     try {
       const result = await handleToolCall(toolName, args, client);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
         isError: false,
       };
     } catch (error) {
       return {
-        content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        content: [{ type: 'text' as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
         isError: true,
       };
     }
   });
 
-  server.prompt('market-data-analysis', 'Guide for fetching and analyzing Binance market data', async () => ({
-    messages: [{ role: 'user' as const, content: { type: 'text' as const, text: 'Binance market data analyst. Tools: bn_ping, bn_ticker_price, bn_ticker_24hr, bn_klines, bn_order_book, bn_avg_price, bn_book_ticker, bn_recent_trades, bn_aggregate_trades, bn_exchange_info, bn_server_time. Symbol format: BTCUSDT. All public, no API key needed.' } }],
+  // prompts/list
+  server.setRequestHandler(ListPromptsRequestSchema, () => ({
+    prompts: [
+      { name: 'market-data-analysis', description: 'Guide for fetching and analyzing Binance market data' },
+      { name: 'trading-guide', description: 'Guide for placing and managing orders on Binance' },
+    ],
   }));
 
-  server.prompt('trading-guide', 'Guide for placing and managing orders on Binance', async () => ({
-    messages: [{ role: 'user' as const, content: { type: 'text' as const, text: 'WARNING: Real money. Always bn_test_order first. Tools: bn_new_order, bn_test_order, bn_query_order, bn_cancel_order, bn_cancel_all_orders, bn_open_orders, bn_all_orders, bn_account_info, bn_my_trades.' } }],
-  }));
+  // prompts/get
+  server.setRequestHandler(GetPromptRequestSchema, (request) => {
+    if (request.params.name === 'market-data-analysis') {
+      return {
+        messages: [{ role: 'user' as const, content: { type: 'text' as const, text: 'Binance market data analyst. Public tools (no API key): bn_ping, bn_ticker_price, bn_ticker_24hr, bn_klines, bn_order_book, bn_avg_price, bn_book_ticker, bn_recent_trades, bn_aggregate_trades, bn_exchange_info, bn_server_time. Symbol format: BTCUSDT.' } }],
+      };
+    }
+    return {
+      messages: [{ role: 'user' as const, content: { type: 'text' as const, text: 'WARNING: Real money. Always bn_test_order first. Tools: bn_new_order, bn_test_order, bn_query_order, bn_cancel_order, bn_cancel_all_orders, bn_open_orders, bn_all_orders, bn_account_info, bn_my_trades.' } }],
+    };
+  });
 
   return server;
 }
